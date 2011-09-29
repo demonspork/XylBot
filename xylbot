@@ -14,19 +14,17 @@ our $loaded;
 our (%module_status, %module_loaded, @module_files);
 
 our (%commands, %commands_public, %commands_private, %command_help);
-
 our (%handlers);
 
-our (%Config, $require_name, $configfile, $server, $channel, $nick, $owner, $port, $password, $linedelay, $logtofile, $pid_file);
+our ($server, $channel, $nick, $owner, $port, $password, $linedelay, $require_name, $logtofile, $pid_file);
 
 our ($cur_channel, $cur_connection, $cur_fromnick, $cur_forum);
 
-our (%joined_channels, %all_users, %users_by_account);
+our (%joined_channels, %channel_users);
 
 our (@users);
 
 our $quitting;
-
 
 # This stuff is for the logfile date (not sure I need it all, but I do need some of it)
 
@@ -38,11 +36,13 @@ our (@months, @nummonths, @weekDays, $logdate, $second, $minute, $hour, $dayOfMo
 ($second, $minute, $hour, $dayOfMonth, $month, $yearOffset, $dayOfWeek, $dayOfYear, $daylightSavings) = localtime();
 $year = 1900 + $yearOffset;
 
+
+
 sub bot_log {
-	$logdate = "$year-$nummonths[$month]";
+	$logdate = "$nummonths[$month]-$year";
 	if ($logtofile)
 	{
-		open FILE, ">>", "logs/$Config{'pid_file'}-$logdate.log";
+		open FILE, ">>", "logs/$pid_file-$logdate.log";
 		print FILE scalar(localtime), "\t", @_;
 		close FILE;
 	}
@@ -52,34 +52,17 @@ sub bot_log {
 	}
 }
 
-## Load default config values, these will only be used if there is no xylbot.conf and the values aren't passed to xylbot-base when it is called
-
 if (!defined $loaded || !$loaded)
 {
-	$Config{'pid_file'}= "xylbot";
-	$Config{'server'} = "irc.globalgamers.net";
-	$Config{'owner'} = "Daz";
-	$Config{'nick'} = $Config{'owner'}."Bot";
-	$Config{'channel'} = "#".$Config{'owner'}."Bot";
-	$Config{'password'} = "";
-	$Config{'port'} = 6668;
-	$Config{'linedelay'} = 1;
-	$Config{'logtofile'} = 0;
-	$configfile = 'xylbot.conf';
+	$pid_file= "xylbot";
+	$server = "irc.globalgamers.net";
+	$channel = "#xylbot";
+	$nick = "DazBot";
+	$owner = "Daz";
+	$password = "";
+	$port = 6668;
+	$linedelay = 1;
 
-	#Parse Config file to overrite the default settings where they are defined.
-	parse_config_file($configfile);
-
-	#keep the old variables updated until I have time to replace them all with a $Config hash
-	$nick = $Config{'nick'};
-	$server = $Config{'server'};
-	$owner = $Config{'owner'};
-	$password = $Config{'password'};
-	$port = $Config{'port'};
-	$linedelay = $Config{'linedelay'};
-	$channel = $Config{'channel'};
-	$logtofile = $Config{'logtofile'};
-	
 	for my $arg (@ARGV)
 	{
 		if ($arg =~ /^([^=]+)=([^=]+)$/)
@@ -90,18 +73,17 @@ if (!defined $loaded || !$loaded)
 	
 	$loaded = 1;
 	
-	bot_log "$Config{'server'} $Config{'channel'} $Config{'nick'} $Config{'owner'}\n";
+	bot_log "$server $channel $nick $owner\n";
 }
 else
 {
-	&parse_config_file($configfile);
 	bot_log "Reloaded.\n";
 	return;
 }
 
 # Save PID
-if ($Config{'pid_file'}) {
-	open FILE, ">", "pid.$Config{'pid_file'}";
+if ($pid_file) {
+	open FILE, ">", "pid.$pid_file";
 	print FILE $$;
 	close FILE;
 }
@@ -110,41 +92,19 @@ if ($Config{'pid_file'}) {
 
 autoflush STDOUT;
 
-sub parse_config_file {
-	my ($config_line, $Name, $Value, $File);
-
-    	($File) = @_;
-
-    	if (!open (CONFIG, "$File")) {
-        	print "ERROR: Config file not found : $File";
-        	exit(0);
-    	}	
-
-	while (<CONFIG>) {
-    		chomp;                  # no newline
-    		s/^#.*//;               # no commented lines (still reads midline #)
-    		s/^\s+//;               # no leading white
-    		s/\s+$//;               # no trailing white
-    		next unless length;     # anything left?
-   		my ($Name, $Value) = split(/\s*=\s*/, $_, 2);
-    		$Config{$Name} = $Value;
-	}	 	
-    	close(CONFIG);	
-}
-
 our $irc = new Net::IRC;
 
 our $connection;
 	
 sub create_connection {
 	$connection = $irc->newconn(
-		Nick => $Config{'nick'},
-		Server => $Config{'server'},
-		Port => $Config{'port'},
-		Password => $Config{'password'},
-		Pacing => $Config{'linedelay'},
-		Username => $Config{'owner'}.'bot',
-		Ircname => $Config{'owner'}.'bot');
+		Nick => $nick,
+		Server => $server,
+		Port => $port,
+		Password => $password,
+		Pacing => $linedelay,
+		Username => 'dazbot',
+		Ircname => 'dazbot');
 	add_commands();
 	add_handlers();
 	return $connection;
@@ -267,39 +227,7 @@ sub on_msg {
 	
 	my $public = ($to =~ /^#/);
 	
-	# bot_log "MSG from $from to $to: $msg\n";
-	
-	my $qnick = quotemeta lc $nick;
-	my $cmdspec = $require_name ? qr/!$qnick\s+/i : qr/!(?:$qnick\s+)?/i;
-	my $msgcmdspec = qr/!?(?:$qnick\s+)?/i;
-	
-	$msg = strip_codes($msg);
-	
-	if ($public ? $msg =~ /^\s*$cmdspec([\w]+)(?:\s+(.*)|\s*)$/ : $msg =~ /^\s*$msgcmdspec([\w]+)(?:\s+(.*)|\s*)$/)
-	{
-		my $command = $1;
-		my $args = $2 || "";
-		$args =~ s/\s+$//;
-		eval {
-			do_command($self, $command, $public ? "public" : "private", $from, $to, $args);
-		};
-		if ($@)
-		{
-			bot_log "Error while executing command $command: $@";
-		}
-	}
-}
-
-sub on_notice {
-	my ($self, $event) = @_;
-	
-	my $msg = ($event->args)[0];
-	my $from = $event->from;
-	my $to = ${$event->to}[0];
-	
-	my $public = ($to =~ /^#/);
-	
-	bot_log "NOTICE from $from to $to: $msg\n";
+       #bot_log "MSG from $from to $to: $msg\n";
 	
 	my $qnick = quotemeta lc $nick;
 	my $cmdspec = $require_name ? qr/!$qnick\s+/i : qr/!(?:$qnick\s+)?/i;
@@ -348,12 +276,10 @@ sub on_disconnect {
 #### This quits and restarts the bot immediately upon disconnect.
 ## This was forced into play by several bugs that occured on disconnect/reconnect from IRC
 
-	if (!$quitting)
-	{
-        	$quitting = 1;
-        	`./xylbot &`;
-		exit(0);
-	}
+        $quitting = 1;
+        `./xylbot-globalgamers-silent &`;
+	exit(0);
+
 ####
 	
 	my ($self, $event) = @_;
@@ -483,7 +409,6 @@ sub add_handlers {
 	$connection->add_handler("nick", \&on_nick);
 	$connection->add_handler("notice", \&on_notice);
 	$connection->add_handler("354", \&on_whoreply);
-	#$connection->add_handler("354", \&on_whoreply_account);
 	foreach my $mod (keys %module_loaded)
 	{
 		if ($module_loaded{$mod} and exists &{"${mod}::add_handlers"})
