@@ -263,9 +263,8 @@ sub cmd_in {
 	}
 	if ($players{$fromnick})
 	{
-		if ($player_masks{$fromnick} eq $frommask) {
-			notice($fromnick, "You are already signed up.");
-		}
+		notice($fromnick, "You are already signed up.");
+		
 		if ($account eq 'nologin') {
 			notice($fromnick, "I still don't see your nickserv account. Make sure you are logged in and try \"!$mafia_cmd in\" one more time.");
 			::update_account($fromnick);
