@@ -1191,8 +1191,7 @@ sub mafia_command {
 	
 			announce "$who has been killed by the moderator.";
 		
-			# Modkills can't revive or get a rating.
-			$player_data{$who}{nickserv} = 'nologin';
+			# Modkills can't revive.
 			reduce_status($who, 'revive', '*');
 			kill_player($who);
 			set_safe_status($who, 'immuneresurrect', '*');
