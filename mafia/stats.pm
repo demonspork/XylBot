@@ -24,14 +24,15 @@ our @players;
 our $ratingsfile = "mafia/player-ratings";
 our $setupratingsfile = "mafia/setup-ratings";
 
-our %sortfields;
-$sortfields{rating}++;
-$sortfields{games}++;
-$sortfields{wins}++;
-$sortfields{losses}++;
-$sortfields{draws}++;
-$sortfields{change}++;
-$sortfields{lastseen}++;
+our %sortfields = (
+rating => 1,
+wins => 1,
+games => 1,
+losses => 1,
+draws => 1,
+change =>1,
+lastseen => 1 
+);
 
 our $factor = 36;
 our $divisor = 400;
