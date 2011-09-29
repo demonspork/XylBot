@@ -38,6 +38,7 @@ our $mafia_cmd;
 $mafia_cmd = 'xmafia' unless defined($mafia_cmd);
 
 our $cur_setup;
+our %valid_setups;
 our $nonrandom_assignment;
 
 our $mafiachannel;
@@ -55,7 +56,7 @@ our $test_schedule_croak;
 our $test_noflush;
 
 # These files are automatically loaded by the bot skeleton.
-our @files = qw(roles actions.pm resolver.pm commands.pm setup.pm test.pm);
+our @files = qw(roles actions.pm resolver.pm commands.pm setup.pm test.pm stats.pm);
 
 our (@funny_roles);
 
@@ -1595,11 +1596,13 @@ sub game_over {
 	{
 		::bot_log "WIN nobody (draw)\n";
 		announce "Game over. It's a draw!";
+		calculate_draw();
 	}
 	elsif ($winners[0] eq "")
 	{
 		::bot_log "WIN nobody (game stopped)\n" unless $phase eq 'signup';
 		announce "The game has been stopped.";
+		cancel_stats();
 	}
 	else
 	{
@@ -1617,6 +1620,7 @@ sub game_over {
 			}
 		}
 		announce "Game over! Winners: @winner_descs";
+		calculate_ratings(%winning_players);
 	}
 	
 	# Record stats
@@ -2055,6 +2059,10 @@ sub start_game {
 	foreach my $player (@alive) {
 		handle_trigger($player, get_status($player, "onstart"));
 	}
+	
+	#initialize the statistics (must be done here because the stats are based on the player's starting teams)
+	begin_stats();
+	
 	
 	unschedule(\$chosentimer) unless !setup_rule('rolechoices', $cur_setup);
 

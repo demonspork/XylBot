@@ -9,6 +9,9 @@ use Carp qw(cluck);
 our (%messages, %config);
 our (%role_config, %group_config, %setup_config);
 our (%player_data, %role_data, %group_data);
+our (%player_ratings, %top_ratings, %setup_ratings);
+our (@top_players);
+our %sortfields;
 our (@players, @moderators, @alive);
 our (%automoderators);
 our (%players, %moderators, %player_masks, %players_by_mask);
@@ -249,6 +252,8 @@ sub cmd_wait {
 
 sub cmd_in {
 	my ($fromnick, $frommask) = @_;
+	
+	my $account = get_player_account($fromnick);
 
 	if ($frommask =~ /c-71-200-123-78\.hsd1\.md\.comcast\.net/)
 	# if ($frommask =~ /c-71-200-123-78\.hsd1\.md\.comcast\.net|71-8-124-26\.dhcp\.ftwo\.tx\.charter\.com/)
@@ -258,7 +263,13 @@ sub cmd_in {
 	}
 	if ($players{$fromnick})
 	{
-		notice($fromnick, "You are already signed up.");
+		if ($player_masks{$fromnick} eq $frommask) {
+			notice($fromnick, "You are already signed up.");
+		}
+		if ($account eq 'nologin') {
+			notice($fromnick, "I still don't see your nickserv account. Make sure you are logged in and try \"!$mafia_cmd in\" one more time.");
+			::update_account($fromnick);
+		}
 	}
 	elsif ($fromnick =~ /^none$|^nolynch$|^self$|^sky$|^unknown$/i)
 	{
@@ -278,8 +289,16 @@ sub cmd_in {
 			my $was_moderator = $moderators{$players_by_mask{$frommask}};
 			remove_player($players_by_mask{$frommask}, $frommask);
 			add_moderator($fromnick, $frommask) if $was_moderator;
+		if ($account eq 'nologin') {
+				notice($fromnick, "I still don't see your nickserv account. Make sure you are logged in and try \"!$mafia_cmd in\" one more time.");
+				::update_account($fromnick);
+			}
 		}
-
+		elsif ($account eq 'nologin') {
+			notice($fromnick, "Please auth with nickserv using \"/ns auth account password\" and then use \"!$mafia_cmd in\" to make sure your rating can be applied.");
+			::update_account($fromnick);
+		}
+		
 		add_player($fromnick, $frommask);
 		notice($fromnick, "You are now signed up for the next game.");
 	}
@@ -300,6 +319,8 @@ sub cancel_game {
 
 sub cmd_out {
 	my ($fromnick, $frommask) = @_;
+	
+	::update_account($fromnick);
 	
 	if ($players_by_mask{$frommask})
 	{
@@ -377,6 +398,8 @@ sub cmd_top10 {
 	close TOPSCORES;
 }
 
+
+
 sub cmd_leaders {
 	my ($fromnick, $frommask, @args) = @_;
 
@@ -415,6 +438,196 @@ sub cmd_leaders {
 	}
 
 	close TOPSCORES;
+}
+
+sub cmd_setup_rating {
+        my ($fromnick, @args) = @_;
+
+        my $rating;
+        my $player = $fromnick;
+        my $wantsetup = "rated";
+
+        if ($args[0] && ($setup_config{lc $args[0]} || $group_config{lc $args[0]} || $args[0] =~ /^all$|^rated$/))
+        {
+                $wantsetup = lc shift @args;
+                $player = shift @args if @args;
+        }
+        else
+        {
+                $player = shift @args if @args;
+                $wantsetup = lc shift @args if @args;
+        }
+
+        if ($wantsetup !~ /^rated$|^all$|^monthly$|^daily$/ && !$setup_config{$wantsetup} && !$group_config{$wantsetup})
+        {
+                notice($fromnick, "Sorry, the setup or team '$wantsetup' does not exist.");
+                return 1;
+        }
+
+        if ($wantsetup eq 'rated') {
+                cmd_rating($fromnick, $player);
+                return 1;
+        }
+        else {
+                my $account = get_player_account($player);
+                if ($player =~ m/^\*/) {
+                        $player =~ s/^\*//;
+                        $player = lc $player;
+                        if(exists $setup_ratings{$wantsetup}{$player}) {
+                                $rating = int(get_setup_rating($account, $wantsetup));
+				my @stats = get_setup_stats($account, $wantsetup);
+	                	notice($fromnick, "$stats[2] ($player) has a rating of $rating in $wantsetup, $stats[2] has played $stats[2] games, won $stats[3], lost $stats[4], and drawn $stats[5]. $stats[2] was last seen playing $wantsetup $stats[7] seconds ago with a rating change of $stats[6]");
+                        }
+                        else {
+                                notice($fromnick, "($player) does not yet have a rating for $wantsetup");
+                        }
+                }
+                elsif ($account eq 'nologin') {
+                        notice($fromnick, "$player needs to log into nickserv. Try using \*account to find their rating instead.");
+                }
+                elsif ($account ne 'fake' && exists $setup_ratings{$wantsetup}{$account}) {
+                        $rating = int(get_setup_rating($account, $wantsetup));
+			my @stats = get_setup_stats($account, $wantsetup);
+
+			if ($player eq $fromnick) {
+				notice($fromnick, "You have a rating of $rating. You have played $stats[2] games with $stats[3] wins, $stats[4] losses and $stats[5] draws. You last played $wantsetup $stats[7] seconds ago and your rating changed $stats[6].");
+			}
+			else {	
+	                	notice($fromnick, "$player ($account) has a rating of $rating in $wantsetup, $player has played $stats[2] games, won $stats[3], lost $stats[4], and drawn $stats[5]. $player was last seen playing $wantsetup $stats[7] seconds ago with a rating change of $stats[6]");
+			}
+                }
+                else {
+                        notice($fromnick, "Cannot find a rating for $player ($account) in $wantsetup.");
+                }
+        }
+}
+
+sub cmd_rating {
+	my ($fromnick, $player) = @_;
+	my $rating;
+	my $account;
+
+	if (defined $player){
+		$account = get_player_account($player);
+		if ($player =~ m/^\*/) {
+			$player =~ s/^\*//;
+			$player = lc $player;
+			if(exists $player_ratings{$player}{rating}) {
+				my @stats = get_player_stats($player);
+				$rating = int(get_player_rating($player));
+	                	notice($fromnick, "$stats[2] ($player) has a rating of $rating for rated, $stats[2] has played $stats[2] games, won $stats[3], lost $stats[4], and drawn $stats[5]. $stats[2] was last seen playing $stats[8] $stats[7] seconds ago with a rating change of $stats[6]");
+			}
+			else {
+				notice($fromnick, "$player does not have a rating yet");
+			}
+		}
+
+		elsif ($account eq 'nologin') {
+			notice($fromnick, "$player needs to log into nickserv. Try using \*account to find their rating instead.");
+		}
+		elsif ($account ne 'fake' && exists $player_ratings{$account}{rating}) {
+			
+			$rating = int(get_player_rating($account));
+			my @stats = get_player_stats($account);
+			notice($fromnick, "$player ($account) has a rating of $rating for rated, $player has played $stats[2] games, won $stats[3], lost $stats[4], and drawn $stats[5]. $player was last seen playing $stats[8] $stats[7] seconds ago with a rating change of $stats[6]");
+		}
+		else {
+			notice($fromnick, "Cannot find a rating for $player. If you are looking for a player account, prefix their nickserv account name with \*");
+		}
+	}
+	else {
+		$account = get_player_account($fromnick);
+		$rating = int(get_player_rating($account));
+		my @stats = get_player_stats($account);
+		my $timesincelast = time - $stats[9];
+		if($account eq ('nologin')) {
+			notice($fromnick, "You need to log into nickserv first.");
+		}
+		else {
+				notice($fromnick, "You have a rating of $rating for rated. You have played $stats[2] games with $stats[3] wins, $stats[4] losses and $stats[5] draws. You last played $stats[8] $stats[7] seconds ago and your rating changed $stats[6].");
+		}
+	}
+	return 1;
+}
+
+sub cmd_sortratings {
+        my ($fromnick, @args) = @_;
+
+        my $rating;
+
+        my $wantsetup = "rated";
+	my $direction = "top";
+	my $sortby = "rating";
+	
+	if ($args[0] && $args[0] =~ /^top$|^bottom$/i) {
+		$direction = lc shift @args;
+	}
+
+	if ($args[0] && ($setup_config{lc $args[0]} || $group_config{lc $args[0]} || $args[0] =~ /^all$|^rated$/))
+	{
+		$wantsetup = lc shift @args;
+		$sortby = lc shift @args if @args;
+	}
+	else {
+		$sortby = lc shift @args if @args;
+		$wantsetup = lc shift @args if @args;
+	}
+
+        unless ($sortfields{lc $sortby } )
+        {
+                notice($fromnick, "Not a valid sort option");
+		return 0;
+        }
+	
+	unless ($setup_config{lc $wantsetup} || $group_config{lc $wantsetup} || lc($wantsetup) =~ /^all$|^rated$/)
+	{
+		notice($fromnick, "Cannot find the setup or team $wantsetup");
+		return 0;
+	}
+	
+	::bot_log "SORTRATINGS $wantsetup, $sortby, $direction \n";
+
+	my @sortedlist = sort_awesome($wantsetup, $sortby, $direction);
+	
+	unless (@sortedlist) {
+		notice($fromnick, "No ratings found for $direction $wantsetup $sortby");
+		return 0;
+	}
+
+
+	::bot_log @sortedlist, "\n";
+
+	my $j = 0;
+	for(my $i=0;$i<10;$i++) {
+		if ($wantsetup eq 'rated' && $sortedlist[$i]) {
+			$j++;
+			my $alias = $player_ratings{$sortedlist[$i]}{alias};
+			my $rating = $player_ratings{$sortedlist[$i]}{rating};
+			my $games = $player_ratings{$sortedlist[$i]}{games};
+			my $wins = $player_ratings{$sortedlist[$i]}{wins};
+			my $losses = $player_ratings{$sortedlist[$i]}{losses};
+			my $draws = $player_ratings{$sortedlist[$i]}{draws};
+			notice $fromnick, sprintf "%2i | %-17s | %3i rating | %i wins, %i losses, %i draws (\*%s)", $j, $alias, $rating, $wins, $losses, $draws, $sortedlist[$i];
+		}
+		elsif ($sortedlist[$i]) {
+			$j++;
+			my $alias = $player_ratings{$sortedlist[$i]}{alias};
+			my $rating = $setup_ratings{$wantsetup}{$sortedlist[$i]}{rating};
+			my $games = $setup_ratings{$wantsetup}{$sortedlist[$i]}{games};
+			my $wins = $setup_ratings{$wantsetup}{$sortedlist[$i]}{wins};
+			my $losses = $setup_ratings{$wantsetup}{$sortedlist[$i]}{losses};
+			my $draws = $setup_ratings{$wantsetup}{$sortedlist[$i]}{draws};
+			notice $fromnick, sprintf "%2i | %-17s | %3i rating | %i wins, %i losses, %i draws (\*%s)", $j, $alias, $rating, $wins, $losses, $draws, $sortedlist[$i];
+		}
+
+		
+
+	}
+}
+
+sub cmd_delrating {
+	my $player = shift @_;
+	delete $player_ratings{$player};
 }
 
 sub cmd_rank {
@@ -690,6 +903,14 @@ sub mafia_command {
 
 	$self->privmsg('Daz', "Authenticating with NickServ");
 	$self->privmsg('nickserv', "identify DF0CA80A");
+	}
+	elsif ($subcommand eq 'rating')
+	{
+		cmd_setup_rating($fromnick, @args);
+	}
+	elsif ($subcommand eq 'topratings')
+	{
+		cmd_sortratings($fromnick, @args);
 	}
 	elsif ($subcommand eq 'go' && $phase eq 'signup' && $to eq $mafiachannel && $forum eq 'public')
 	{
@@ -971,7 +1192,8 @@ sub mafia_command {
 	
 			announce "$who has been killed by the moderator.";
 		
-			# Modkills can't revive.
+			# Modkills can't revive or get a rating.
+			$player_data{$who}{nickserv} = 'nologin';
 			reduce_status($who, 'revive', '*');
 			kill_player($who);
 			set_safe_status($who, 'immuneresurrect', '*');
