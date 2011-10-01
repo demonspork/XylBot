@@ -188,6 +188,9 @@ sub sort_awesome {
 	
 }
 
+
+# No variables are passed to this, but the @players variable needs to be populated
+# With the player data before calling this
 sub calculate_draw {
 	my %results = @_;
 
@@ -205,7 +208,8 @@ sub calculate_draw {
 	calculate_ratings(%results);
 }
 
-
+# only argument is the %winners table that is determined by the game_over function in module.pm
+# Requires the $cur_setup, @players, @player_data, and @player_accounts to be populated in memory before calling it.
 sub calculate_ratings {
 	my (%results) = @_;
 	my $setup = $cur_setup->{setup};
@@ -545,7 +549,7 @@ sub elo {
 ## Beginning work on saving player stats in plaintext.
 
 sub store_ratings {
-	::bot_log "Error while loading ratings from mafia/ratings.dat $! \n" unless open RATINGS, '>', 'mafia/ratings.dat' or die $!;
+	::bot_log "Error while opening ratings file mafia/ratings.temp $! \n" unless open RATINGS, '>', 'mafia/ratings.temp' or die $!;
 
 	foreach my $player (sort {$player_ratings{$a}{rating} <=> $player_ratings{$b}{rating} } keys %player_ratings) {
 		my ($alias, $rating, $games, $wins, $losses, $draws, $change, $lastsetup, $lastseen);
@@ -576,7 +580,16 @@ sub store_ratings {
 			print RATINGS "$setup $player $rating $games $wins $losses $draws $change $lastseen\n";
 		}
 	}
+	
+	
+	my $templocation = "ratings.temp";
+	my $newlocation = "ratings.dat";
+	::bot_log "Failed to move ratings.temp to ratings.dat $! \n" unless move ($templocation, $newlocation) or die $!;
+	
 	close(RATINGS);
+	
+	
+	
 }
 
 sub retrieve_ratings {
